@@ -17,7 +17,7 @@
     // ==========================================
     // 🔑 COLOQUE SUA CHAVE DE API ABAIXO
     // ==========================================
-    const API_KEY = 'AIzaSyDSnbQyr3JzfuW3ZtaeiPql0tzdF3ky6j8';
+    const API_KEY = 'api_key';
 
     // Evita que o chat abra dentro de iframes (anúncios, vídeos embutidos)
     if (window !== window.top) return;
