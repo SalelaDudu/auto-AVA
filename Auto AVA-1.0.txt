@@ -1,111 +1,61 @@
 // ==UserScript==
-// @name         Auto AVA
+// @name         Auto AVA (NUKE)
 // @namespace    http://tampermonkey.net/
 // @version      1.0
-// @description  Extrai questões (com opções) em TXT e preenche respostas automaticamente.
+// @description  Extrator TXT e Resolução 100% Automática pela API do Gemini. 100% Furtivo (Apenas Alerts).
 // @author       Salela + Gemini
 // @match        https://ava3.cefor.ifes.edu.br/mod/quiz/attempt.php*
 // @match        https://ava3.cefor.ifes.edu.br/mod/quiz/review.php*
-// @grant        none
+// @grant        GM_xmlhttpRequest
+// @grant        GM_registerMenuCommand
+// @connect      generativelanguage.googleapis.com
 // ==/UserScript==
 
 (function() {
     'use strict';
 
-    // Variáveis de controle de estado
-    const isExtracting = localStorage.getItem('robo_extrator_ativo') === 'true';
-    const isAnswering = localStorage.getItem('robo_respondedor_ativo') === 'true';
+    // ==========================================
+    // 🔑 COLOQUE SUA CHAVE DE API ABAIXO
+    // ==========================================
+    const API_KEY = 'api_key';
 
-    // Roteamento de ações automáticas (silencioso, sem barra no topo)
-    if (isExtracting) {
-        processarPaginaAtualExtrator();
-    } else if (isAnswering) {
+    // Evita rodar em iframes ocultos
+    if (window !== window.top) return;
+
+    // Gerenciamento de Estado do Robô
+    const avaState = localStorage.getItem('ava_state');
+
+    if (avaState === 'extracting_txt') {
+        processarPaginaAtualExtrator('txt');
+    } else if (avaState === 'extracting_gemini') {
+        processarPaginaAtualExtrator('gemini');
+    } else if (avaState === 'filling') {
         esperarEditorEPreencher();
     } else {
-        criarInterface();
+        // Estado Ocioso: Registra os menus do Tampermonkey
+        GM_registerMenuCommand("📥 Extrair Questões (TXT)", () => iniciarExtrator('txt'));
+        GM_registerMenuCommand("📝 Responder (Colar Texto)", iniciarPromptRespondedor);
+        GM_registerMenuCommand("✨ Resolver Tudo com Gemini Automático", () => iniciarExtrator('gemini'));
     }
 
     // ==========================================
-    // 1. INTERFACE DO USUÁRIO (BOTÕES E MODAL)
+    // 1. LÓGICA DO EXTRATOR
     // ==========================================
-    function criarInterface() {
-        const container = document.createElement('div');
-        container.style = 'position: fixed; bottom: 20px; right: 20px; z-index: 999999; display: flex; flex-direction: column; gap: 10px;';
+    function iniciarExtrator(destino) {
+        let msg = destino === 'gemini'
+            ? 'O script vai coletar as questoes, enviar para o Gemini e preencher as respostas sozinho. Nao clique em nada. Deseja comecar?'
+            : 'O script vai navegar por todas as paginas para baixar o TXT. Nao clique em nada. Deseja comecar?';
 
-        // Botão Extrator
-        const btnExtrair = document.createElement('button');
-        btnExtrair.innerText = 'Extrair Questoes (TXT)';
-        btnExtrair.style = 'padding: 12px; background-color: #007bff; color: #fff; border: none; border-radius: 5px; cursor: pointer; box-shadow: 0px 4px 6px rgba(0,0,0,0.3); font-weight: bold; transition: background-color 0.3s;';
-        btnExtrair.addEventListener('mouseenter', () => btnExtrair.style.backgroundColor = '#0056b3');
-        btnExtrair.addEventListener('mouseleave', () => btnExtrair.style.backgroundColor = '#007bff');
-
-        // Botão Respondedor
-        const btnResponder = document.createElement('button');
-        btnResponder.innerText = 'Responder Automatico';
-        btnResponder.style = 'padding: 12px; background-color: #28a745; color: #fff; border: none; border-radius: 5px; cursor: pointer; box-shadow: 0px 4px 6px rgba(0,0,0,0.3); font-weight: bold; transition: background-color 0.3s;';
-        btnResponder.addEventListener('mouseenter', () => btnResponder.style.backgroundColor = '#218838');
-        btnResponder.addEventListener('mouseleave', () => btnResponder.style.backgroundColor = '#28a745');
-
-        container.appendChild(btnExtrair);
-        container.appendChild(btnResponder);
-        document.body.appendChild(container);
-
-        // Modal do Respondedor
-        const modal = document.createElement('div');
-        modal.style = 'display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 1000000; justify-content: center; align-items: center;';
-
-        const modalContent = document.createElement('div');
-        modalContent.style = 'background: #fff; padding: 25px; border-radius: 8px; width: 80%; max-width: 650px; display: flex; flex-direction: column; gap: 15px; box-shadow: 0px 10px 30px rgba(0,0,0,0.5);';
-
-        const label = document.createElement('h3');
-        label.innerText = 'Cole suas respostas abaixo:';
-        label.style.margin = '0';
-        label.style.fontFamily = 'Arial, sans-serif';
-
-        const textarea = document.createElement('textarea');
-        textarea.style = 'width: 100%; height: 350px; padding: 10px; font-family: monospace; resize: vertical; border: 1px solid #ccc; border-radius: 4px;';
-        textarea.placeholder = "Padrao esperado:\n\n1) a\n\n29) blablalba...";
-
-        const btnContainer = document.createElement('div');
-        btnContainer.style = 'display: flex; justify-content: flex-end; gap: 10px;';
-
-        const btnCancelar = document.createElement('button');
-        btnCancelar.innerText = 'Cancelar';
-        btnCancelar.style = 'padding: 10px 20px; cursor: pointer; border: none; border-radius: 5px; background: #dc3545; color: white; font-weight: bold;';
-
-        const btnIniciar = document.createElement('button');
-        btnIniciar.innerText = 'Iniciar Preenchimento';
-        btnIniciar.style = 'padding: 10px 20px; cursor: pointer; border: none; border-radius: 5px; background: #007bff; color: white; font-weight: bold;';
-
-        btnContainer.appendChild(btnCancelar);
-        btnContainer.appendChild(btnIniciar);
-        modalContent.appendChild(label);
-        modalContent.appendChild(textarea);
-        modalContent.appendChild(btnContainer);
-        modal.appendChild(modalContent);
-        document.body.appendChild(modal);
-
-        // Eventos da UI
-        btnExtrair.addEventListener('click', iniciarExtrator);
-        btnResponder.addEventListener('click', () => { modal.style.display = 'flex'; });
-        btnCancelar.addEventListener('click', () => { modal.style.display = 'none'; });
-        btnIniciar.addEventListener('click', () => iniciarRespondedor(textarea.value));
-    }
-
-    // ==========================================
-    // 2. LÓGICA DO EXTRATOR
-    // ==========================================
-    function iniciarExtrator() {
-        if (confirm('O script vai navegar automaticamente por todas as paginas para copiar as questoes. Nao clique em nada. Deseja comecar?')) {
-            localStorage.setItem('robo_extrator_ativo', 'true');
-            localStorage.setItem('robo_extrator_questoes', JSON.stringify([]));
-            irParaPagina1OuProcessar(processarPaginaAtualExtrator);
+        if (confirm(msg)) {
+            localStorage.setItem('ava_state', destino === 'gemini' ? 'extracting_gemini' : 'extracting_txt');
+            localStorage.setItem('ava_questoes', JSON.stringify([]));
+            irParaPagina1OuProcessar(() => processarPaginaAtualExtrator(destino));
         }
     }
 
-    function processarPaginaAtualExtrator() {
+    function processarPaginaAtualExtrator(destino) {
         setTimeout(() => {
-            let questoesSalvas = JSON.parse(localStorage.getItem('robo_extrator_questoes') || '[]');
+            let questoesSalvas = JSON.parse(localStorage.getItem('ava_questoes') || '[]');
             const questionNodes = document.querySelectorAll('.que');
 
             questionNodes.forEach(qNode => {
@@ -115,12 +65,11 @@
                 if (qNoElement && qTextElement) {
                     let textoCompleto = qTextElement.innerText.trim();
 
-                    // Lógica para extrair as opções de múltipla escolha
+                    // Coleta alternativas de múltipla escolha
                     const options = qNode.querySelectorAll('.answer [data-region="answer-label"], .answer label');
                     if (options.length > 0) {
-                        textoCompleto += '\n'; // Espaçamento entre enunciado e opções
+                        textoCompleto += '\n';
                         options.forEach(opt => {
-                            // Limpa quebras de linha sujas no meio da alternativa
                             textoCompleto += '\n' + opt.innerText.trim().replace(/\s+/g, ' ');
                         });
                     }
@@ -137,7 +86,7 @@
             questoesSalvas.forEach(q => mapUnique.set(q.numero, q));
             questoesSalvas = Array.from(mapUnique.values());
 
-            localStorage.setItem('robo_extrator_questoes', JSON.stringify(questoesSalvas));
+            localStorage.setItem('ava_questoes', JSON.stringify(questoesSalvas));
 
             // Navegação
             const currentPageBtn = document.querySelector('.qnbutton.thispage');
@@ -148,43 +97,110 @@
                 if (nextPgBtn) {
                     window.location.href = nextPgBtn.href.split('#')[0];
                 } else {
-                    finalizarExtracao(questoesSalvas);
+                    finalizarExtracao(questoesSalvas, destino);
                 }
             } else {
-                finalizarExtracao(questoesSalvas);
+                finalizarExtracao(questoesSalvas, destino);
             }
         }, 1000);
     }
 
-    function finalizarExtracao(questoes) {
-        localStorage.removeItem('robo_extrator_ativo');
-        localStorage.removeItem('robo_extrator_questoes');
-
+    function finalizarExtracao(questoes, destino) {
         questoes.sort((a, b) => a.numero - b.numero);
 
-        let textoFinal = '';
-        questoes.forEach(q => {
-            textoFinal += `${q.numero}) ${q.texto}\n\n`;
-        });
-
-        if (questoes.length > 0) {
-            baixarTXT(textoFinal, 'questoes_questionario.txt');
-            alert(`Processo concluido. Extracao finalizada com ${questoes.length} questoes.`);
-        } else {
+        if (questoes.length === 0) {
+            limparEstado();
             alert('Aviso: Nenhuma questao foi encontrada.');
+            return location.reload();
         }
 
-        location.reload();
+        if (destino === 'txt') {
+            limparEstado();
+            let textoFinal = '';
+            questoes.forEach(q => { textoFinal += `${q.numero}) ${q.texto}\n\n`; });
+            baixarTXT(textoFinal, 'questoes_questionario.txt');
+            alert(`Extracao finalizada com ${questoes.length} questoes salvas em TXT.`);
+            location.reload();
+        } else if (destino === 'gemini') {
+            pedirRespostasAoGemini(questoes);
+        }
+    }
+
+    // ==========================================
+    // 2. INTEGRAÇÃO AUTOMÁTICA COM GEMINI API
+    // ==========================================
+    function pedirRespostasAoGemini(questoes) {
+        if (!API_KEY || API_KEY === 'SUA_API_KEY_AQUI') {
+            limparEstado();
+            alert("Erro: API Key não configurada. Edite o script no Tampermonkey e insira sua chave do Gemini.");
+            return location.reload();
+        }
+
+        // Alerta nativo e invisível no DOM informando a comunicação com a API
+        alert(`🧠 Enviando ${questoes.length} questões para o Gemini...\n\nIsso pode levar de 5 a 20 segundos. Clique em OK e aguarde o script iniciar o preenchimento automático. NÃO recarregue a página.`);
+
+        const textoQuestoes = questoes.map(q => `${q.numero}) ${q.texto}`).join('\n\n');
+
+        const prompt = `Você é um assistente acadêmico automatizado. Resolva as questões abaixo.
+REGRAS VITAIS DE FORMATAÇÃO (Seu retorno será lido por um script):
+- Seu retorno DEVE ser APENAS uma lista numerada. Sem introduções, sem explicações extras.
+- Não use formatação Markdown (como ** ou blocos de código \`\`\`).
+- O formato exato obrigatório é:
+1) resposta
+2) resposta
+- Para questões de Múltipla Escolha, responda APENAS a letra correta, pura e simples (ex: 1) a).
+- Para questões Dissertativas, forneça a resposta direta e concisa.
+
+QUESTÕES:
+${textoQuestoes}`;
+
+        GM_xmlhttpRequest({
+            method: "POST",
+            url: `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${API_KEY}`,
+            headers: { "Content-Type": "application/json" },
+            data: JSON.stringify({ contents: [{ role: "user", parts: [{ text: prompt }] }] }),
+            onload: function(response) {
+                try {
+                    const data = JSON.parse(response.responseText);
+                    if (data.error) throw new Error(data.error.message);
+
+                    let botReply = data.candidates[0].content.parts[0].text;
+
+                    // Limpa possíveis formatações residuais do Gemini (ex: tirando blocos markdown)
+                    botReply = botReply.replace(/```[a-z]*\n?/gi, '').trim();
+
+                    // Dispara o auto-preenchimento com o texto recebido da IA
+                    iniciarPreenchimentoOculto(botReply);
+
+                } catch (e) {
+                    limparEstado();
+                    alert("Erro ao contatar Gemini: " + e.message);
+                    location.reload();
+                }
+            },
+            onerror: function() {
+                limparEstado();
+                alert("Erro de conexão com o Google Gemini. Verifique sua internet.");
+                location.reload();
+            }
+        });
     }
 
     // ==========================================
     // 3. LÓGICA DO RESPONDEDOR
     // ==========================================
-    function iniciarRespondedor(textoBase) {
+    function iniciarPromptRespondedor() {
+        const textoBase = prompt('Cole suas respostas abaixo seguindo o padrao numerico (Ex: "1) a" ou "2) texto") e clique em OK:');
+        if (textoBase === null) return;
+
         if (!textoBase.trim()) {
-            return alert('Cole o texto com as respostas antes de iniciar.');
+            return alert('Nenhum texto foi inserido. Processo cancelado.');
         }
 
+        iniciarPreenchimentoOculto(textoBase);
+    }
+
+    function iniciarPreenchimentoOculto(textoBase) {
         const regex = /(?:^|\n)\s*(\d+)\)\s*([\s\S]*?)(?=\n\s*\d+\)|$)/g;
         let match;
         const respostas = {};
@@ -196,14 +212,13 @@
         }
 
         if (count === 0) {
-            return alert('Falha ao identificar questoes. Use o padrao "1) resposta".');
+            limparEstado();
+            return alert('Falha ao identificar respostas. O Gemini falhou ou o texto copiado esta fora do padrao "1) resposta".');
         }
 
-        if (confirm(`Foram identificadas ${count} respostas. O preenchimento iniciara automaticamente. Deseja prosseguir?`)) {
-            localStorage.setItem('robo_respondedor_ativo', 'true');
-            localStorage.setItem('robo_respostas', JSON.stringify(respostas));
-            irParaPagina1OuProcessar(esperarEditorEPreencher);
-        }
+        localStorage.setItem('ava_state', 'filling');
+        localStorage.setItem('ava_respostas', JSON.stringify(respostas));
+        irParaPagina1OuProcessar(esperarEditorEPreencher);
     }
 
     function esperarEditorEPreencher() {
@@ -219,7 +234,7 @@
     }
 
     function preencherRespostasEAvancar() {
-        const respostas = JSON.parse(localStorage.getItem('robo_respostas') || '{}');
+        const respostas = JSON.parse(localStorage.getItem('ava_respostas') || '{}');
         const questionNodes = document.querySelectorAll('.que');
 
         questionNodes.forEach(qNode => {
@@ -231,11 +246,10 @@
             if (respostas[qNo]) {
                 const textoResposta = respostas[qNo];
 
-                // Elementos de Dissertação e Múltipla Escolha
                 const textarea = qNode.querySelector('textarea[id$="_answer_id"], textarea.form-control');
                 const radios = qNode.querySelectorAll('input[type="radio"]');
 
-                // Lógica de Preenchimento para Dissertativas
+                // Preenchimento de Texto
                 if (textarea) {
                     const id = textarea.id;
                     if (typeof tinymce !== 'undefined' && tinymce.get(id)) {
@@ -244,21 +258,20 @@
                         textarea.value = textoResposta;
                     }
                 }
-                // Lógica de Preenchimento para Múltipla Escolha
+                // Preenchimento de Alternativas
                 else if (radios.length > 0) {
-                    const targetLetter = textoResposta.toLowerCase();
+                    // Pega só a primeira letra da resposta
+                    const targetLetter = textoResposta.replace(/[^a-zA-Z]/g, '').charAt(0).toLowerCase();
                     let matched = false;
 
                     radios.forEach(radio => {
                         if (matched) return;
                         let labelText = '';
 
-                        // Tenta encontrar o texto da alternativa pelo Moodle padrão (label)
                         const labelEl = qNode.querySelector(`label[for="${radio.id}"]`);
                         if (labelEl) {
                             labelText = labelEl.innerText.trim().toLowerCase();
                         } else {
-                            // Tenta encontrar o texto da alternativa pelo tema do Cefor (aria-labelledby)
                             const ariaId = radio.getAttribute('aria-labelledby');
                             if (ariaId) {
                                 const ariaEl = document.getElementById(ariaId);
@@ -267,7 +280,6 @@
                         }
 
                         if (labelText) {
-                            // Clica se começar com "a.", "a)" ou se for exatamente "a"
                             if (labelText.startsWith(targetLetter + '.') ||
                                 labelText.startsWith(targetLetter + ')') ||
                                 labelText === targetLetter) {
@@ -286,30 +298,27 @@
             if (btnNext) {
                 btnNext.click();
             } else {
-                finalizarPreenchimento();
+                limparEstado();
+                alert('✨ Processo Finalizado!\n\nAs paginas foram percorridas e respondidas. Por favor, confira na revisao antes de finalizar definitivamente a tentativa.');
             }
         }, 1500);
-    }
-
-    function finalizarPreenchimento() {
-        localStorage.removeItem('robo_respondedor_ativo');
-        localStorage.removeItem('robo_respostas');
-
-        const painelFinal = document.createElement('div');
-        painelFinal.style = 'position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: #28a745; color: #fff; padding: 30px; z-index: 9999999; font-weight: bold; font-size: 20px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); text-align: center;';
-        painelFinal.innerHTML = 'Processo Finalizado!<br><br><span style="font-size:15px; font-weight:normal;">As paginas foram percorridas com sucesso.<br>Confira na revisao se as questoes estao respondidas.</span><br><br><button onclick="location.reload()" style="margin-top:20px; padding:10px 25px; border:none; border-radius:5px; background:#fff; color:#28a745; font-weight:bold; cursor:pointer;">Entendi</button>';
-
-        document.body.appendChild(painelFinal);
     }
 
     // ==========================================
     // 4. FUNÇÕES UTILITÁRIAS
     // ==========================================
+    function limparEstado() {
+        localStorage.removeItem('ava_state');
+        localStorage.removeItem('ava_questoes');
+        localStorage.removeItem('ava_respostas');
+    }
+
     function baixarTXT(conteudo, nomeArquivo) {
         const blob = new Blob([conteudo], { type: 'text/plain;charset=utf-8' });
         const link = document.createElement('a');
         link.href = URL.createObjectURL(blob);
         link.download = nomeArquivo;
+        link.style.display = 'none';
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
