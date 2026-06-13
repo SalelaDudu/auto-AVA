@@ -1,13 +1,15 @@
 // ==UserScript==
 // @name         Auto AVA (NUKE)
 // @namespace    http://tampermonkey.net/
-// @version      1.0
-// @description  Extrator TXT e Resolução 100% Automática pela API do Gemini. 100% Furtivo (Apenas Alerts).
+// @version      2.0
+// @description  Extrator TXT, Resolução API c/ Múltiplos PDFs, Padrão Seguro. 100% Furtivo.
 // @author       Salela + Gemini
 // @match        https://ava3.cefor.ifes.edu.br/mod/quiz/attempt.php*
 // @match        https://ava3.cefor.ifes.edu.br/mod/quiz/review.php*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_registerMenuCommand
+// @grant        GM_setValue
+// @grant        GM_getValue
 // @connect      generativelanguage.googleapis.com
 // ==/UserScript==
 
@@ -36,6 +38,73 @@
         GM_registerMenuCommand("📥 Extrair Questões (TXT)", () => iniciarExtrator('txt'));
         GM_registerMenuCommand("📝 Responder (Colar Texto)", iniciarPromptRespondedor);
         GM_registerMenuCommand("✨ Resolver Tudo com Gemini Automático", () => iniciarExtrator('gemini'));
+        GM_registerMenuCommand("📄 Anexar PDF(s) de Referência", carregarPDF);
+        GM_registerMenuCommand("🗑️ Limpar PDF(s)", limparPDF);
+    }
+
+    // ==========================================
+    // 0. LÓGICA DE PDF DE CONTEXTO (MÚLTIPLOS)
+    // ==========================================
+    function carregarPDF() {
+        // Alerta o usuário da trava do navegador
+        alert("Após selecionar OK, clique em qualquer lugar da tela para selecionar os pdf's.");
+
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'application/pdf';
+        input.multiple = true;
+        input.style.display = 'none';
+        document.body.appendChild(input);
+
+        input.onchange = async (e) => {
+            const files = Array.from(e.target.files);
+            if (files.length === 0) {
+                document.body.removeChild(input);
+                return;
+            }
+
+            // Calcula o tamanho total (Segurança da API para não travar a requisição)
+            const totalSize = files.reduce((acc, file) => acc + file.size, 0);
+            if (totalSize > 15 * 1024 * 1024) {
+                alert("O tamanho total dos arquivos excede 15MB. A requisição pode falhar. Selecione menos arquivos.");
+                document.body.removeChild(input);
+                return;
+            }
+
+            try {
+                // Converte todos os arquivos para Base64 assincronamente
+                const base64Promises = files.map(file => {
+                    return new Promise((resolve, reject) => {
+                        const reader = new FileReader();
+                        reader.onload = evt => resolve(evt.target.result.split(',')[1]);
+                        reader.onerror = err => reject(err);
+                        reader.readAsDataURL(file);
+                    });
+                });
+
+                const base64Files = await Promise.all(base64Promises);
+
+                // Salva o Array inteiro de Base64 na memória da extensão
+                GM_setValue('ava_pdf_refs', JSON.stringify(base64Files));
+                alert(`📄 ${files.length} PDF(s) carregado(s) com sucesso na memória!`);
+            } catch (error) {
+                alert("Erro ao processar os arquivos PDF.");
+            }
+
+            document.body.removeChild(input);
+        };
+
+        // Aguarda um clique real do usuário na tela para acionar a janela de arquivos (Bypass de Segurança)
+        const dispararJanela = () => {
+            input.click();
+            document.removeEventListener('click', dispararJanela, { capture: true });
+        };
+        document.addEventListener('click', dispararJanela, { capture: true, once: true });
+    }
+
+    function limparPDF() {
+        GM_setValue('ava_pdf_refs', '[]');
+        alert("🗑️ Os PDFs de referência foram removidos da memória.");
     }
 
     // ==========================================
@@ -54,55 +123,53 @@
     }
 
     function processarPaginaAtualExtrator(destino) {
-        setTimeout(() => {
-            let questoesSalvas = JSON.parse(localStorage.getItem('ava_questoes') || '[]');
-            const questionNodes = document.querySelectorAll('.que');
+        let questoesSalvas = JSON.parse(localStorage.getItem('ava_questoes') || '[]');
+        const questionNodes = document.querySelectorAll('.que');
 
-            questionNodes.forEach(qNode => {
-                const qNoElement = qNode.querySelector('.qno');
-                const qTextElement = qNode.querySelector('.qtext');
+        questionNodes.forEach(qNode => {
+            const qNoElement = qNode.querySelector('.qno');
+            const qTextElement = qNode.querySelector('.qtext');
 
-                if (qNoElement && qTextElement) {
-                    let textoCompleto = qTextElement.innerText.trim();
+            if (qNoElement && qTextElement) {
+                let textoCompleto = qTextElement.innerText.trim();
 
-                    // Coleta alternativas de múltipla escolha
-                    const options = qNode.querySelectorAll('.answer [data-region="answer-label"], .answer label');
-                    if (options.length > 0) {
-                        textoCompleto += '\n';
-                        options.forEach(opt => {
-                            textoCompleto += '\n' + opt.innerText.trim().replace(/\s+/g, ' ');
-                        });
-                    }
-
-                    questoesSalvas.push({
-                        numero: parseInt(qNoElement.innerText.trim(), 10),
-                        texto: textoCompleto
+                // Coleta alternativas de múltipla escolha se houverem
+                const options = qNode.querySelectorAll('.answer [data-region="answer-label"], .answer label');
+                if (options.length > 0) {
+                    textoCompleto += '\n';
+                    options.forEach(opt => {
+                        textoCompleto += '\n' + opt.innerText.trim().replace(/\s+/g, ' ');
                     });
                 }
-            });
 
-            // Remove duplicatas
-            const mapUnique = new Map();
-            questoesSalvas.forEach(q => mapUnique.set(q.numero, q));
-            questoesSalvas = Array.from(mapUnique.values());
+                questoesSalvas.push({
+                    numero: parseInt(qNoElement.innerText.trim(), 10),
+                    texto: textoCompleto
+                });
+            }
+        });
 
-            localStorage.setItem('ava_questoes', JSON.stringify(questoesSalvas));
+        // Remove duplicatas pelo número da questão
+        const mapUnique = new Map();
+        questoesSalvas.forEach(q => mapUnique.set(q.numero, q));
+        questoesSalvas = Array.from(mapUnique.values());
 
-            // Navegação
-            const currentPageBtn = document.querySelector('.qnbutton.thispage');
-            if (currentPageBtn) {
-                const currentPgIndex = parseInt(currentPageBtn.getAttribute('data-quiz-page'), 10);
-                const nextPgBtn = document.querySelector(`.qnbutton[data-quiz-page="${currentPgIndex + 1}"]`);
+        localStorage.setItem('ava_questoes', JSON.stringify(questoesSalvas));
 
-                if (nextPgBtn) {
-                    window.location.href = nextPgBtn.href.split('#')[0];
-                } else {
-                    finalizarExtracao(questoesSalvas, destino);
-                }
+        // Navegação Rápida
+        const currentPageBtn = document.querySelector('.qnbutton.thispage');
+        if (currentPageBtn) {
+            const currentPgIndex = parseInt(currentPageBtn.getAttribute('data-quiz-page'), 10);
+            const nextPgBtn = document.querySelector(`.qnbutton[data-quiz-page="${currentPgIndex + 1}"]`);
+
+            if (nextPgBtn) {
+                window.location.replace(nextPgBtn.href.split('#')[0]);
             } else {
                 finalizarExtracao(questoesSalvas, destino);
             }
-        }, 1000);
+        } else {
+            finalizarExtracao(questoesSalvas, destino);
+        }
     }
 
     function finalizarExtracao(questoes, destino) {
@@ -136,40 +203,97 @@
             return location.reload();
         }
 
-        // Alerta nativo e invisível no DOM informando a comunicação com a API
-        alert(`🧠 Enviando ${questoes.length} questões para o Gemini...\n\nIsso pode levar de 5 a 20 segundos. Clique em OK e aguarde o script iniciar o preenchimento automático. NÃO recarregue a página.`);
+        alert(`🧠 Enviando ${questoes.length} questões para o Gemini...\n\nIsso pode levar alguns segundos. Clique em OK e aguarde o script iniciar o preenchimento automático. NÃO recarregue a página.`);
 
         const textoQuestoes = questoes.map(q => `${q.numero}) ${q.texto}`).join('\n\n');
 
-        const prompt = `Você é um assistente acadêmico automatizado. Resolva as questões abaixo.
-REGRAS VITAIS DE FORMATAÇÃO (Seu retorno será lido por um script):
-- Seu retorno DEVE ser APENAS uma lista numerada. Sem introduções, sem explicações extras.
-- Não use formatação Markdown (como ** ou blocos de código \`\`\`).
-- O formato exato obrigatório é:
-1) resposta
-2) resposta
-- Para questões de Múltipla Escolha, responda APENAS a letra correta, pura e simples (ex: 1) a).
-- Para questões Dissertativas, forneça a resposta direta e concisa.
+        const prompt = `Você é um assistente acadêmico especializado em resolver atividades com máxima precisão.
+
+OBJETIVO:
+Resolver todas as questões apresentadas utilizando prioritariamente os materiais anexados (PDFs, textos, imagens ou outros documentos fornecidos). Quando houver conflito entre conhecimento externo e o material fornecido, priorize o conteúdo do material.
+
+REGRAS DE RESPOSTA (OBRIGATÓRIAS):
+
+Retorne APENAS as respostas solicitadas.
+Não inclua introduções, conclusões, cumprimentos ou comentários adicionais.
+Não explique seu raciocínio.
+Não justifique respostas.
+Não forneça referências bibliográficas.
+Não utilize observações, notas ou avisos.
+Não utilize Markdown.
+Não utilize listas, tópicos ou qualquer formatação diferente da especificada.
+Não adicione texto antes ou depois das respostas.
+
+FORMATO OBRIGATÓRIO:
+Cada questão deve seguir exatamente o padrão:
+
+1: "resposta"
+2: "resposta"
+3: "resposta"
+
+Para respostas com múltiplas linhas:
+
+1: "linha 1
+linha 2
+linha 3"
+
+QUESTÕES DE MÚLTIPLA ESCOLHA:
+
+Retorne SOMENTE a letra correta em minúsculo.
+Exemplo:
+1: "a"
+2: "c"
+
+QUESTÕES DISSERTATIVAS:
+
+Responda de forma objetiva, clara e diretamente relacionada ao conteúdo do material fornecido.
+Utilize apenas as informações necessárias para responder corretamente.
+Não exceda limites de palavras quando especificados na questão.
+
+VALIDAÇÃO FINAL:
+Antes de finalizar, verifique se:
+
+Todas as questões foram respondidas.
+A numeração está correta.
+Todas as respostas estão entre aspas duplas.
+Não existe nenhum texto fora do formato exigido.
+Nenhuma explicação foi incluída.
+O formato solicitado foi seguido rigorosamente.
 
 QUESTÕES:
 ${textoQuestoes}`;
+
+        const parts = [{ text: prompt }];
+
+        // Resgata o Array de PDFs salvos na memória e insere no payload
+        const pdfsJson = GM_getValue('ava_pdf_refs', '[]');
+        let pdfList = [];
+        try { pdfList = JSON.parse(pdfsJson); } catch (e) {}
+
+        if (Array.isArray(pdfList) && pdfList.length > 0) {
+            pdfList.forEach(base64 => {
+                parts.push({
+                    inlineData: {
+                        mimeType: "application/pdf",
+                        data: base64
+                    }
+                });
+            });
+        }
 
         GM_xmlhttpRequest({
             method: "POST",
             url: `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${API_KEY}`,
             headers: { "Content-Type": "application/json" },
-            data: JSON.stringify({ contents: [{ role: "user", parts: [{ text: prompt }] }] }),
+            data: JSON.stringify({ contents: [{ role: "user", parts: parts }] }),
             onload: function(response) {
                 try {
                     const data = JSON.parse(response.responseText);
                     if (data.error) throw new Error(data.error.message);
 
                     let botReply = data.candidates[0].content.parts[0].text;
-
-                    // Limpa possíveis formatações residuais do Gemini (ex: tirando blocos markdown)
                     botReply = botReply.replace(/```[a-z]*\n?/gi, '').trim();
 
-                    // Dispara o auto-preenchimento com o texto recebido da IA
                     iniciarPreenchimentoOculto(botReply);
 
                 } catch (e) {
@@ -190,7 +314,7 @@ ${textoQuestoes}`;
     // 3. LÓGICA DO RESPONDEDOR
     // ==========================================
     function iniciarPromptRespondedor() {
-        const textoBase = prompt('Cole suas respostas abaixo seguindo o padrao numerico (Ex: "1) a" ou "2) texto") e clique em OK:');
+        const textoBase = prompt('Cole suas respostas abaixo usando aspas duplas (Ex: 1: "a" ou 2: "texto longo") e clique em OK:');
         if (textoBase === null) return;
 
         if (!textoBase.trim()) {
@@ -201,7 +325,8 @@ ${textoQuestoes}`;
     }
 
     function iniciarPreenchimentoOculto(textoBase) {
-        const regex = /(?:^|\n)\s*(\d+)\)\s*([\s\S]*?)(?=\n\s*\d+\)|$)/g;
+        // Expressão Regular Failsafe: captura o padrão "numero: "conteúdo"" ignorando quebras de linha sujas
+        const regex = /^\s*(\d+):\s*"([\s\S]*?)"/gm;
         let match;
         const respostas = {};
         let count = 0;
@@ -213,7 +338,7 @@ ${textoQuestoes}`;
 
         if (count === 0) {
             limparEstado();
-            return alert('Falha ao identificar respostas. O Gemini falhou ou o texto copiado esta fora do padrao "1) resposta".');
+            return alert('Falha ao identificar respostas. Certifique-se que estão no padrão com aspas:\n1: "resposta"');
         }
 
         localStorage.setItem('ava_state', 'filling');
@@ -225,12 +350,14 @@ ${textoQuestoes}`;
         let tentativas = 0;
         const intervalo = setInterval(() => {
             tentativas++;
-            // Verifica se as instâncias do TinyMCE existem ou se deu timeout (5s)
-            if ((typeof tinymce !== 'undefined' && tinymce.editors && tinymce.editors.length > 0) || tentativas > 10) {
+            const temQuestoesTexto = document.querySelectorAll('textarea[id$="_answer_id"], textarea.form-control').length > 0;
+            const tinyPronto = typeof tinymce !== 'undefined' && tinymce.editors && tinymce.editors.length > 0;
+
+            if (!temQuestoesTexto || tinyPronto || tentativas > 50) {
                 clearInterval(intervalo);
                 preencherRespostasEAvancar();
             }
-        }, 500);
+        }, 100);
     }
 
     function preencherRespostasEAvancar() {
@@ -249,7 +376,6 @@ ${textoQuestoes}`;
                 const textarea = qNode.querySelector('textarea[id$="_answer_id"], textarea.form-control');
                 const radios = qNode.querySelectorAll('input[type="radio"]');
 
-                // Preenchimento de Texto
                 if (textarea) {
                     const id = textarea.id;
                     if (typeof tinymce !== 'undefined' && tinymce.get(id)) {
@@ -258,9 +384,8 @@ ${textoQuestoes}`;
                         textarea.value = textoResposta;
                     }
                 }
-                // Preenchimento de Alternativas
                 else if (radios.length > 0) {
-                    // Pega só a primeira letra da resposta
+                    // Pega a primeira letra da resposta para as alternativas
                     const targetLetter = textoResposta.replace(/[^a-zA-Z]/g, '').charAt(0).toLowerCase();
                     let matched = false;
 
@@ -292,16 +417,33 @@ ${textoQuestoes}`;
             }
         });
 
-        // Espera renderizar os cliques/textos e avança
         setTimeout(() => {
-            const btnNext = document.querySelector('input[name="next"], button.mod_quiz-next-nav');
-            if (btnNext) {
-                btnNext.click();
-            } else {
-                limparEstado();
-                alert('✨ Processo Finalizado!\n\nAs paginas foram percorridas e respondidas. Por favor, confira na revisao antes de finalizar definitivamente a tentativa.');
+            const currentPageBtn = document.querySelector('.qnbutton.thispage');
+            let isLastPage = true;
+
+            if (currentPageBtn) {
+                const currentPgIndex = parseInt(currentPageBtn.getAttribute('data-quiz-page'), 10);
+                const nextPgBtn = document.querySelector(`.qnbutton[data-quiz-page="${currentPgIndex + 1}"]`);
+                if (nextPgBtn) isLastPage = false;
             }
-        }, 1500);
+
+            if (!isLastPage) {
+                const btnNext = document.querySelector('input[name="next"], button.mod_quiz-next-nav');
+                if (btnNext) {
+                    btnNext.click();
+                } else {
+                    finalizarPreenchimento();
+                }
+            } else {
+                // Failsafe: última página atingida, encerra a máquina para não fazer submissão indevida
+                finalizarPreenchimento();
+            }
+        }, 200);
+    }
+
+    function finalizarPreenchimento() {
+        limparEstado();
+        alert('Processo Finalizado!\nPor favor, confira as respostas antes de terminar a tentativa manualmente.');
     }
 
     // ==========================================
@@ -327,7 +469,7 @@ ${textoQuestoes}`;
     function irParaPagina1OuProcessar(funcaoProcessamento) {
         const btnPage1 = document.querySelector('.qnbutton[data-quiz-page="0"]');
         if (btnPage1 && window.location.href.split('#')[0] !== btnPage1.href.split('#')[0]) {
-            window.location.href = btnPage1.href.split('#')[0];
+            window.location.replace(btnPage1.href.split('#')[0]);
         } else {
             funcaoProcessamento === esperarEditorEPreencher ? location.reload() : funcaoProcessamento();
         }
