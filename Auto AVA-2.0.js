@@ -19,7 +19,7 @@
     // ==========================================
     // 🔑 COLOQUE SUA CHAVE DE API ABAIXO
     // ==========================================
-    const API_KEY = 'AIzaSyB7x4wyd9ax0FnG_M5SkquZTGSLvJ08VSI';
+    const API_KEY = 'SUA_KEY_AQUI';
     // Evita rodar em iframes ocultos
     if (window !== window.top) return;
 
