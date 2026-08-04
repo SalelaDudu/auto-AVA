@@ -1,9 +1,9 @@
 // ==UserScript==
-// @name         Auto AVA (NUKE)
+// @name         Auto AVA (NUKE) - V/F Atualizado
 // @namespace    http://tampermonkey.net/
-// @version      2.0
-// @description  Extrator TXT, Resolução API c/ Múltiplos PDFs, Padrão Seguro. 100% Furtivo.
-// @author       Salela + Gemini
+// @version      2.2
+// @description  Extrator TXT, Resolução API c/ Múltiplos PDFs, Suporte a Verdadeiro/Falso. 100% Furtivo.
+// @author       Salela + Gemini + Crazy Man
 // @match        https://ava3.cefor.ifes.edu.br/mod/quiz/attempt.php*
 // @match        https://ava3.cefor.ifes.edu.br/mod/quiz/review.php*
 // @grant        GM_xmlhttpRequest
@@ -19,7 +19,7 @@
     // ==========================================
     // 🔑 COLOQUE SUA CHAVE DE API ABAIXO
     // ==========================================
-    const API_KEY = 'api_key';
+    const API_KEY = 'CHAVE_API';
 
     // Evita rodar em iframes ocultos
     if (window !== window.top) return;
@@ -38,6 +38,7 @@
         GM_registerMenuCommand("📥 Extrair Questões (TXT)", () => iniciarExtrator('txt'));
         GM_registerMenuCommand("📝 Responder (Colar Texto)", iniciarPromptRespondedor);
         GM_registerMenuCommand("✨ Resolver Tudo com Gemini Automático", () => iniciarExtrator('gemini'));
+        GM_registerMenuCommand("🎯 Resolver Apenas Página Atual (ALT+X)", resolverPaginaAtualComGemini);
         GM_registerMenuCommand("📄 Anexar PDF(s) de Referência", carregarPDF);
         GM_registerMenuCommand("🗑️ Limpar PDF(s)", limparPDF);
     }
@@ -46,7 +47,6 @@
     // 0. LÓGICA DE PDF DE CONTEXTO (MÚLTIPLOS)
     // ==========================================
     function carregarPDF() {
-        // Alerta o usuário da trava do navegador
         alert("Após selecionar OK, clique em qualquer lugar da tela para selecionar os pdf's.");
 
         const input = document.createElement('input');
@@ -63,7 +63,6 @@
                 return;
             }
 
-            // Calcula o tamanho total (Segurança da API para não travar a requisição)
             const totalSize = files.reduce((acc, file) => acc + file.size, 0);
             if (totalSize > 15 * 1024 * 1024) {
                 alert("O tamanho total dos arquivos excede 15MB. A requisição pode falhar. Selecione menos arquivos.");
@@ -72,7 +71,6 @@
             }
 
             try {
-                // Converte todos os arquivos para Base64 assincronamente
                 const base64Promises = files.map(file => {
                     return new Promise((resolve, reject) => {
                         const reader = new FileReader();
@@ -83,8 +81,6 @@
                 });
 
                 const base64Files = await Promise.all(base64Promises);
-
-                // Salva o Array inteiro de Base64 na memória da extensão
                 GM_setValue('ava_pdf_refs', JSON.stringify(base64Files));
                 alert(`📄 ${files.length} PDF(s) carregado(s) com sucesso na memória!`);
             } catch (error) {
@@ -94,7 +90,6 @@
             document.body.removeChild(input);
         };
 
-        // Aguarda um clique real do usuário na tela para acionar a janela de arquivos (Bypass de Segurança)
         const dispararJanela = () => {
             input.click();
             document.removeEventListener('click', dispararJanela, { capture: true });
@@ -133,7 +128,6 @@
             if (qNoElement && qTextElement) {
                 let textoCompleto = qTextElement.innerText.trim();
 
-                // Coleta alternativas de múltipla escolha se houverem
                 const options = qNode.querySelectorAll('.answer [data-region="answer-label"], .answer label');
                 if (options.length > 0) {
                     textoCompleto += '\n';
@@ -149,14 +143,12 @@
             }
         });
 
-        // Remove duplicatas pelo número da questão
         const mapUnique = new Map();
         questoesSalvas.forEach(q => mapUnique.set(q.numero, q));
         questoesSalvas = Array.from(mapUnique.values());
 
         localStorage.setItem('ava_questoes', JSON.stringify(questoesSalvas));
 
-        // Navegação Rápida
         const currentPageBtn = document.querySelector('.qnbutton.thispage');
         if (currentPageBtn) {
             const currentPgIndex = parseInt(currentPageBtn.getAttribute('data-quiz-page'), 10);
@@ -213,7 +205,6 @@ OBJETIVO:
 Resolver todas as questões apresentadas utilizando prioritariamente os materiais anexados (PDFs, textos, imagens ou outros documentos fornecidos). Quando houver conflito entre conhecimento externo e o material fornecido, priorize o conteúdo do material.
 
 REGRAS DE RESPOSTA (OBRIGATÓRIAS):
-
 Retorne APENAS as respostas solicitadas.
 Não inclua introduções, conclusões, cumprimentos ou comentários adicionais.
 Não explique seu raciocínio.
@@ -226,46 +217,32 @@ Não adicione texto antes ou depois das respostas.
 
 FORMATO OBRIGATÓRIO:
 Cada questão deve seguir exatamente o padrão:
-
 1: "resposta"
 2: "resposta"
 3: "resposta"
 
 Para respostas com múltiplas linhas:
-
 1: "linha 1
 linha 2
 linha 3"
 
-QUESTÕES DE MÚLTIPLA ESCOLHA:
-
-Retorne SOMENTE a letra correta em minúsculo.
-Exemplo:
-1: "a"
-2: "c"
+QUESTÕES DE MÚLTIPLA ESCOLHA E VERDADEIRO/FALSO:
+- Para múltipla escolha tradicional, retorne SOMENTE a letra correta em minúsculo. Exemplo: 1: "a" ou 2: "c"
+- Para questões de Verdadeiro ou Falso, retorne exatamente a palavra por extenso em minúsculo: "verdadeiro" ou "falso". Exemplo: 3: "verdadeiro" ou 4: "falso"
 
 QUESTÕES DISSERTATIVAS:
-
 Responda de forma objetiva, clara e diretamente relacionada ao conteúdo do material fornecido.
 Utilize apenas as informações necessárias para responder corretamente.
 Não exceda limites de palavras quando especificados na questão.
 
 VALIDAÇÃO FINAL:
-Antes de finalizar, verifique se:
-
-Todas as questões foram respondidas.
-A numeração está correta.
-Todas as respostas estão entre aspas duplas.
-Não existe nenhum texto fora do formato exigido.
-Nenhuma explicação foi incluída.
-O formato solicitado foi seguido rigorosamente.
+Antes de finalizar, verifique se todas as questões foram respondidas, se a numeração está correta e se todas as respostas estão entre aspas duplas.
 
 QUESTÕES:
 ${textoQuestoes}`;
 
         const parts = [{ text: prompt }];
 
-        // Resgata o Array de PDFs salvos na memória e insere no payload
         const pdfsJson = GM_getValue('ava_pdf_refs', '[]');
         let pdfList = [];
         try { pdfList = JSON.parse(pdfsJson); } catch (e) {}
@@ -314,7 +291,7 @@ ${textoQuestoes}`;
     // 3. LÓGICA DO RESPONDEDOR
     // ==========================================
     function iniciarPromptRespondedor() {
-        const textoBase = prompt('Cole suas respostas abaixo usando aspas duplas (Ex: 1: "a" ou 2: "texto longo") e clique em OK:');
+        const textoBase = prompt('Cole suas respostas abaixo usando aspas duplas (Ex: 1: "a" ou 2: "verdadeiro") e clique em OK:');
         if (textoBase === null) return;
 
         if (!textoBase.trim()) {
@@ -325,7 +302,6 @@ ${textoQuestoes}`;
     }
 
     function iniciarPreenchimentoOculto(textoBase) {
-        // Expressão Regular Failsafe: captura o padrão "numero: "conteúdo"" ignorando quebras de linha sujas
         const regex = /^\s*(\d+):\s*"([\s\S]*?)"/gm;
         let match;
         const respostas = {};
@@ -372,7 +348,6 @@ ${textoQuestoes}`;
 
             if (respostas[qNo]) {
                 const textoResposta = respostas[qNo];
-
                 const textarea = qNode.querySelector('textarea[id$="_answer_id"], textarea.form-control');
                 const radios = qNode.querySelectorAll('input[type="radio"]');
 
@@ -385,8 +360,7 @@ ${textoQuestoes}`;
                     }
                 }
                 else if (radios.length > 0) {
-                    // Pega a primeira letra da resposta para as alternativas
-                    const targetLetter = textoResposta.replace(/[^a-zA-Z]/g, '').charAt(0).toLowerCase();
+                    const respostaLimpa = textoResposta.trim().toLowerCase();
                     let matched = false;
 
                     radios.forEach(radio => {
@@ -405,11 +379,19 @@ ${textoQuestoes}`;
                         }
 
                         if (labelText) {
-                            if (labelText.startsWith(targetLetter + '.') ||
-                                labelText.startsWith(targetLetter + ')') ||
-                                labelText === targetLetter) {
-                                radio.click();
-                                matched = true;
+                            if (respostaLimpa === 'verdadeiro' || respostaLimpa === 'falso') {
+                                if (labelText === respostaLimpa || labelText.startsWith(respostaLimpa)) {
+                                    radio.click();
+                                    matched = true;
+                                }
+                            } else {
+                                const targetLetter = respostaLimpa.replace(/[^a-zA-Z]/g, '').charAt(0);
+                                if (labelText.startsWith(targetLetter + '.') ||
+                                    labelText.startsWith(targetLetter + ')') ||
+                                    labelText === targetLetter) {
+                                    radio.click();
+                                    matched = true;
+                                }
                             }
                         }
                     });
@@ -435,7 +417,6 @@ ${textoQuestoes}`;
                     finalizarPreenchimento();
                 }
             } else {
-                // Failsafe: última página atingida, encerra a máquina para não fazer submissão indevida
                 finalizarPreenchimento();
             }
         }, 200);
@@ -474,5 +455,189 @@ ${textoQuestoes}`;
             funcaoProcessamento === esperarEditorEPreencher ? location.reload() : funcaoProcessamento();
         }
     }
+
+    // ==========================================
+    // 5. RESOLVER APENAS A PÁGINA ATUAL (ALT+X)
+    // ==========================================
+    function resolverPaginaAtualComGemini() {
+        if (!API_KEY || API_KEY === 'api_key') {
+            return alert("Erro: API Key não configurada. Edite o script no Tampermonkey e insira sua chave do Gemini.");
+        }
+
+        const questionNodes = document.querySelectorAll('.que');
+        let questoesPagina = [];
+
+        questionNodes.forEach(qNode => {
+            const qNoElement = qNode.querySelector('.qno');
+            const qTextElement = qNode.querySelector('.qtext');
+
+            if (qNoElement && qTextElement) {
+                let textoCompleto = qTextElement.innerText.trim();
+                const options = qNode.querySelectorAll('.answer [data-region="answer-label"], .answer label');
+                if (options.length > 0) {
+                    textoCompleto += '\n';
+                    options.forEach(opt => {
+                        textoCompleto += '\n' + opt.innerText.trim().replace(/\s+/g, ' ');
+                    });
+                }
+                questoesPagina.push({
+                    numero: parseInt(qNoElement.innerText.trim(), 10),
+                    texto: textoCompleto
+                });
+            }
+        });
+
+        if (questoesPagina.length === 0) {
+            return alert("Nenhuma questão encontrada nesta página.");
+        }
+
+        const textoQuestoes = questoesPagina.map(q => `${q.numero}) ${q.texto}`).join('\n\n');
+
+        const prompt = `Você é um assistente acadêmico especializado em resolver atividades com máxima precisão.
+
+OBJETIVO:
+Resolver todas as questões apresentadas utilizando prioritariamente os materiais anexados (PDFs, textos, imagens ou outros documentos fornecidos). Quando houver conflito entre conhecimento externo e o material fornecido, priorize o conteúdo do material.
+
+REGRAS DE RESPOSTA (OBRIGATÓRIAS):
+Retorne APENAS as respostas solicitadas.
+Não inclua introduções, conclusões, cumprimentos ou comentários adicionais.
+Não explique seu raciocínio.
+Não justifique respostas.
+Não forneça referências bibliográficas.
+Não utilize observações, notas ou avisos.
+Não utilize Markdown.
+Não utilize listas, tópicos ou qualquer formatação diferente da especificada.
+Não adicione texto antes ou depois das respostas.
+
+FORMATO OBRIGATÓRIO:
+Cada questão deve seguir exatamente o padrão:
+1: "resposta"
+2: "resposta"
+
+QUESTÕES DE MÚLTIPLA ESCOLHA E VERDADEIRO/FALSO:
+- Para múltipla escolha tradicional, retorne SOMENTE a letra correta em minúsculo. Exemplo: 1: "a"
+- Para questões de Verdadeiro ou Falso, retorne exatamente a palavra por extenso em minúsculo: "verdadeiro" ou "falso". Exemplo: 2: "verdadeiro"
+
+QUESTÕES DISSERTATIVAS:
+Responda de forma objetiva, clara e diretamente relacionada ao conteúdo do material fornecido.
+
+VALIDAÇÃO FINAL:
+Ganta que o formato de retorno obedeça rigorosamente a estrutura pedida.
+
+QUESTÕES:
+${textoQuestoes}`;
+
+        const parts = [{ text: prompt }];
+        const pdfsJson = GM_getValue('ava_pdf_refs', '[]');
+        let pdfList = [];
+        try { pdfList = JSON.parse(pdfsJson); } catch (e) {}
+
+        if (Array.isArray(pdfList) && pdfList.length > 0) {
+            pdfList.forEach(base64 => parts.push({ inlineData: { mimeType: "application/pdf", data: base64 } }));
+        }
+
+        GM_xmlhttpRequest({
+            method: "POST",
+            url: `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${API_KEY}`,
+            headers: { "Content-Type": "application/json" },
+            data: JSON.stringify({ contents: [{ role: "user", parts: parts }] }),
+            onload: function(response) {
+                try {
+                    const data = JSON.parse(response.responseText);
+                    if (data.error) throw new Error(data.error.message);
+
+                    let botReply = data.candidates[0].content.parts[0].text;
+                    botReply = botReply.replace(/```[a-z]*\n?/gi, '').trim();
+
+                    preencherRespostasPaginaAtual(botReply);
+
+                } catch (e) {
+                    alert("Erro ao contatar Gemini (Página Atual): " + e.message);
+                }
+            },
+            onerror: function() {
+                alert("Erro de conexão com o Google Gemini.");
+            }
+        });
+    }
+
+    function preencherRespostasPaginaAtual(textoBase) {
+        const regex = /^\s*(\d+):\s*"([\s\S]*?)"/gm;
+        let match;
+        const respostas = {};
+        let count = 0;
+
+        while ((match = regex.exec(textoBase)) !== null) {
+            respostas[match[1]] = match[2].trim();
+            count++;
+        }
+
+        if (count === 0) {
+            return alert('Falha ao identificar respostas do Gemini. Verifique se o formato retornou corretamente.');
+        }
+
+        const questionNodes = document.querySelectorAll('.que');
+        questionNodes.forEach(qNode => {
+            const qNoElement = qNode.querySelector('.qno');
+            if (!qNoElement) return;
+
+            const qNo = qNoElement.innerText.trim();
+            if (respostas[qNo]) {
+                const textoResposta = respostas[qNo];
+                const textarea = qNode.querySelector('textarea[id$="_answer_id"], textarea.form-control');
+                const radios = qNode.querySelectorAll('input[type="radio"]');
+
+                if (textarea) {
+                    const id = textarea.id;
+                    if (typeof tinymce !== 'undefined' && tinymce.get(id)) {
+                        tinymce.get(id).setContent(textoResposta);
+                    } else {
+                        textarea.value = textoResposta;
+                    }
+                } else if (radios.length > 0) {
+                    const respostaLimpa = textoResposta.trim().toLowerCase();
+                    let matched = false;
+                    radios.forEach(radio => {
+                        if (matched) return;
+                        let labelText = '';
+                        const labelEl = qNode.querySelector(`label[for="${radio.id}"]`);
+                        if (labelEl) {
+                            labelText = labelEl.innerText.trim().toLowerCase();
+                        } else {
+                            const ariaId = radio.getAttribute('aria-labelledby');
+                            if (ariaId) {
+                                const ariaEl = document.getElementById(ariaId);
+                                if (ariaEl) labelText = ariaEl.innerText.trim().toLowerCase();
+                            }
+                        }
+                        if (labelText) {
+                            if (respostaLimpa === 'verdadeiro' || respostaLimpa === 'falso') {
+                                if (labelText === respostaLimpa || labelText.startsWith(respostaLimpa)) {
+                                    radio.click();
+                                    matched = true;
+                                }
+                            } else {
+                                const targetLetter = respostaLimpa.replace(/[^a-zA-Z]/g, '').charAt(0);
+                                if (labelText.startsWith(targetLetter + '.') || labelText.startsWith(targetLetter + ')') || labelText === targetLetter) {
+                                    radio.click();
+                                    matched = true;
+                                }
+                            }
+                        }
+                    });
+                }
+            }
+        });
+    }
+
+    // ==========================================
+    // 6. ATALHOS DE TECLADO
+    // ==========================================
+    document.addEventListener('keydown', (e) => {
+        if (e.altKey && e.key.toLowerCase() === 'x') {
+            e.preventDefault();
+            resolverPaginaAtualComGemini();
+        }
+    });
 
 })();
