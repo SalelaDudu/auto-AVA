@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Auto AVA (NUKE)
 // @namespace    http://tampermonkey.net/
-// @version      3.0
+// @version      3.0.1
 // @description  Extrator TXT, Resolução API c/ Múltiplos PDFs, Modo Prova e Suporte Otimizado para Moodle 4.x.
 // @author       Salela + Gemini + Crazy Man + Mik4el
 // @match        https://ava3.cefor.ifes.edu.br/mod/quiz/attempt.php*
@@ -20,7 +20,7 @@
     // 🔑 CONFIGURAÇÕES DE API E MODO PROVA
     // ==========================================
     const API_KEY = 'CHAVE_API';
-    const GEMINI_MODEL = 'gemini-3.1-flash-lite';
+    const GEMINI_MODEL = 'gemini-3.6-flash';
 
     // Tempo de espera aleatório entre páginas no Modo Prova (em milissegundos)
     const MODO_PROVA_DELAY_MIN = 10000; // 10 segundos
