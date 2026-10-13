@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Auto AVA (NUKE)
 // @namespace    http://tampermonkey.net/
-// @version      3.0.1
-// @description  Extrator TXT, Resolução API c/ Múltiplos PDFs, Modo Prova e Suporte Otimizado para Moodle 4.x.
+// @version      3.0.3
+// @description  Extrator TXT, Resolução API c/ Múltiplos PDFs, Modo Prova, Retry Automático e Prompt Antirrecusa.
 // @author       Salela + Gemini + Crazy Man + Mik4el
 // @match        https://ava3.cefor.ifes.edu.br/mod/quiz/attempt.php*
 // @match        https://ava3.cefor.ifes.edu.br/mod/quiz/review.php*
@@ -19,8 +19,8 @@
     // ==========================================
     // 🔑 CONFIGURAÇÕES DE API E MODO PROVA
     // ==========================================
-    const API_KEY = 'CHAVE_API';
-    const GEMINI_MODEL = 'gemini-3.6-flash';
+    const API_KEY = 'Chave_API';
+    const GEMINI_MODEL = 'gemini-2.5-flash';
 
     // Tempo de espera aleatório entre páginas no Modo Prova (em milissegundos)
     const MODO_PROVA_DELAY_MIN = 10000; // 10 segundos
@@ -244,15 +244,16 @@
     }
 
     // ==========================================
-    // 4. INTEGRAÇÃO COM GEMINI API
+    // 4. INTEGRAÇÃO COM GEMINI API (COM RETRY AUTOMÁTICO)
     // ==========================================
-    function chamarGeminiAPI(promptText, onSuccess, onError) {
+    function chamarGeminiAPI(promptText, onSuccess, onError, tentativa = 1) {
         if (!API_KEY || API_KEY === 'CHAVE_API' || API_KEY === 'SUA_API_KEY_AQUI') {
             alert("Erro: API Key não configurada. Edite o script no Tampermonkey e insira sua chave do Gemini.");
             if (onError) onError();
             return;
         }
 
+        const maxTentativas = 5;
         const parts = [{ text: promptText }];
         const pdfsJson = GM_getValue('ava_pdf_refs', '[]');
         let pdfList = [];
@@ -279,18 +280,38 @@
             onload: function(response) {
                 try {
                     const data = JSON.parse(response.responseText);
-                    if (data.error) throw new Error(data.error.message);
+                    if (data.error) {
+                        const errMsg = data.error.message || '';
+                        if ((errMsg.includes('high demand') || errMsg.includes('overloaded') || response.status === 503) && tentativa < maxTentativas) {
+                            const espera = tentativa * 4000;
+                            console.warn(`⚠️ Gemini com alta demanda (Tentativa ${tentativa}/${maxTentativas}). Tentando novamente em ${espera/1000}s...`);
+                            setTimeout(() => chamarGeminiAPI(promptText, onSuccess, onError, tentativa + 1), espera);
+                            return;
+                        }
+                        throw new Error(errMsg);
+                    }
 
                     let botReply = data.candidates[0].content.parts[0].text;
                     botReply = botReply.replace(/```[a-z]*\n?/gi, '').trim();
 
                     onSuccess(botReply);
                 } catch (e) {
+                    if (tentativa < maxTentativas && (e.message.includes('high demand') || e.message.includes('overloaded'))) {
+                        const espera = tentativa * 4000;
+                        setTimeout(() => chamarGeminiAPI(promptText, onSuccess, onError, tentativa + 1), espera);
+                        return;
+                    }
                     if (onError) onError(e);
                     else alert("Erro ao contatar Gemini: " + e.message);
                 }
             },
             onerror: function(err) {
+                if (tentativa < maxTentativas) {
+                    const espera = tentativa * 4000;
+                    console.warn(`⚠️ Erro de conexão com a API. Tentando novamente em ${espera/1000}s... (${tentativa}/${maxTentativas})`);
+                    setTimeout(() => chamarGeminiAPI(promptText, onSuccess, onError, tentativa + 1), espera);
+                    return;
+                }
                 if (onError) onError(err);
                 else alert("Erro de conexão com o Google Gemini. Verifique sua conexão.");
             }
@@ -298,13 +319,16 @@
     }
 
     function montarPrompt(textoQuestoes) {
-        return `Você é um assistente acadêmico especializado em resolver atividades com máxima precisão.
+        return `Você é um assistente acadêmico especializado em resolver atividades com máxima precisão e conhecimento abrangente.
 
 OBJETIVO:
-Resolver todas as questões apresentadas utilizando prioritariamente os materiais anexados (PDFs, textos, imagens ou outros documentos fornecidos). Quando houver conflito entre conhecimento externo e o material fornecido, priorize o conteúdo do material.
+Resolver todas as questões apresentadas da forma mais correta e precisa possível.
+- Se houver materiais anexados (PDFs, textos ou documentos), utilize-os como referência principal.
+- Caso os materiais anexados não cubram alguma questão ou caso nenhum material tenha sido anexado, utilize todo o seu vasto conhecimento acadêmico, científico e geral para responder com total exatidão.
+- É estritamente PROIBIDO responder que não encontrou informações, que o material é insuficiente ou emitir avisos de que faltam dados. Sempre forneça a melhor e mais assertiva resposta possível para cada questão.
 
 REGRAS DE RESPOSTA (OBRIGATÓRIAS):
-Retorne APENAS as respostas solicitadas.
+Retorne APENAS as respostas solicitadas no formato exato.
 Não inclua introduções, conclusões, cumprimentos ou comentários adicionais.
 Não explique seu raciocínio.
 Não justifique respostas.
@@ -330,11 +354,10 @@ QUESTÕES DE MÚLTIPLA ESCOLHA E VERDADEIRO/FALSO:
 - Para questões de Verdadeiro ou Falso, retorne exatamente a palavra por extenso em minúsculo: "verdadeiro" ou "falso". Exemplo: 3: "verdadeiro" ou 4: "falso"
 
 QUESTÕES DISSERTATIVAS:
-Responda de forma objetiva, clara e diretamente relacionada ao conteúdo do material fornecido.
-Utilize apenas as informações necessárias para responder corretamente.
+Responda de forma objetiva, clara e direta.
 
 VALIDAÇÃO FINAL:
-Antes de finalizar, verifique se todas as questões foram respondidas e no formato exato solicitado.
+Garanta que todas as questões sejam respondidas e que o formato obedeça rigorosamente a estrutura pedida, sem mensagens de erro ou texto adicional.
 
 QUESTÕES:
 ${textoQuestoes}`;
